@@ -1,0 +1,1117 @@
+---
+title: "The attentive online reading: do eye movement modeling examples enhance navigation and evaluation of multiple documents in English (L2)?"
+output:
+  word_document:
+    toc: yes
+    toc_depth: '5'
+  html_notebook:
+    toc: yes
+    toc_depth: 5
+    number_sections: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+bibliography: references.bib
+csl: instituto-brasileiro-de-informacao-em-ciencia-e-tecnologia-abnt-initials.csl
+---
+
+# Preliminary Analyses
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Load packages
+library(tidyverse)    # Helper functions
+library(lme4)         # Mixed-effect models
+library(sjPlot)       # Model plotting
+library(datawizard)   # Skewness and Kurtosis functions
+library(jtools)       # APA theme
+library(gridExtra)    # Multiple plots in one single image
+library(openxlsx)     # Save file in xlsx format
+library(RColorBrewer) # Colors
+library(mediation)    # Mediation analysis
+
+# Configure APA theme for figures
+theme_set(theme_apa())
+
+# Prevent scientific notation
+options(scipen = 999)
+
+# Load raw data - serp
+serp_raw = read.table('data/serp_sem_soma.csv', 
+                 sep = ';', 
+                 dec = ',',
+                 encoding = 'UTF-8',
+                 header = 1) %>%
+  as_tibble()
+
+# Load raw data - source features
+source_features_raw = read.xlsx('data/source_features_sem_soma.xlsx')
+
+# Load raw data - reliable and non-reliable
+reliable_nonreliable_raw = read.xlsx('data/reliable_nonreliable_sem_soma.xlsx')
+```
+
+## Outliers Detection and Replacement
+
+Individual fixations that lasted two standart deviations above or below each participant Total fixation duration mean were considered outliers and were replaced by the participant Total fixation duration median[see @Salmeron2020, p. 1045]. Outliers represented 4.56% of the durations.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Check outliers (individual fixations that lasted two SD above or below each student mean)
+serp_raw = serp_raw %>%
+  rename(Participant = Participant)
+
+serp_raw = serp_raw %>% 
+  group_by(Participant) %>%
+  mutate(M = mean(EventDuration),
+         SD = sd(EventDuration),
+         outlier = EventDuration > M + (2 * SD) | 
+           EventDuration < M - (2 * SD),
+         Median = median(EventDuration))
+
+source_features_raw = source_features_raw %>%
+  group_by(Participant) %>%
+  mutate(M = mean(EventDuration),
+         SD = sd(EventDuration),
+         outlier = EventDuration > M + (2 * SD) |
+           EventDuration < M - (2 * SD),
+         Median = median(EventDuration))
+
+reliable_nonreliable_raw = reliable_nonreliable_raw %>%
+  group_by(Participant) %>%
+  mutate(M = mean(EventDuration),
+         SD = sd(EventDuration),
+         outlier = EventDuration > M + (2 * SD) | 
+           EventDuration < M - (2 * SD),
+         Median = median(EventDuration))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Percentage of outliers
+
+# 4.56%
+c(serp_raw$outlier,
+  source_features_raw$outlier,
+  reliable_nonreliable_raw$outlier) %>% mean()
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Replace outlier with participant's median
+serp_raw = serp_raw %>%
+  mutate(EventDuration = 
+           ifelse(outlier, Median, EventDuration))
+
+source_features_raw = source_features_raw %>%
+  mutate(EventDuration = 
+           ifelse(outlier, Median, EventDuration))
+
+reliable_nonreliable_raw = reliable_nonreliable_raw %>%
+  mutate(EventDuration = 
+           ifelse(outlier, Median, EventDuration))
+
+# Get the mean of EventDuration per text (reliable/nonreliable)
+reliable_nonreliable = reliable_nonreliable_raw %>%
+  group_by(Participant, Text) %>%
+  summarise(EventDuration = sum(EventDuration),
+            Words = unique(Words)) %>%
+  summarise(EventDuration = EventDuration/Words,
+            Text = unique(Text)) %>%
+  mutate(Reliability = ifelse(Text %in% c(1, 3, 5), 'Nonreliable', 'Reliable'))
+
+# Get the mean of EventDuration per word
+serp = serp_raw %>%
+  group_by(Participant) %>%
+  summarise(EventDuration = sum(EventDuration)/233)
+
+source_features = source_features_raw %>%
+  group_by(Participant) %>%
+  summarise(EventDuration = sum(EventDuration)/60)
+
+reliable_nonreliable = reliable_nonreliable %>%
+  group_by(Participant, Reliability) %>%
+  summarise(EventDuration = mean(EventDuration)) %>%
+  pivot_wider(names_from = Reliability, values_from = EventDuration)
+
+# Write data
+write.xlsx(serp, 'data/serp_final.xlsx')
+
+write.xlsx(source_features, 'data/source_features_final.xlsx')
+
+write.xlsx(reliable_nonreliable, 'data/reliable_nonreliable_final.xlsx')
+```
+
+## Tests of Normality and Data Transformation
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+data_final = read.xlsx('data/data_final.xlsx')
+```
+
+Figure 1 shows the frequency distributions of the time variables used in the study. Apart from mean Total fixation duration on reliable pages, all distributions have skewness values higher than 0.5, being right-skewed, as it is commonly observed with time variables. The variables were log-transformed to be better approximated to a normal distribution. The log-transformed variables are shown in Figure 2 with their theoretical probability distributions. Transformation resulted in improved skewness values for two of the four variables, namely, total Total fixation duration on serp and total Total fixation duration on source features. Thus, log-transformed variables were used for these two variables.
+
+[see @Salmeron2020, p. 1047]
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hist_serp = data_final %>%
+    ggplot(aes(serp_clean_per_word)) +
+    geom_histogram() +
+    xlab(str_wrap('Mean total fixation duration on the web page headers and snippets within the SERP', 
+                  width = 32)) +
+    ylab('Frequency') +
+    annotate('text',
+             family = 'serif',
+             x = 400, 
+             y = 7, 
+             label = paste0('Skewness: ', 
+                            round(
+                              skewness(data_final$serp_clean_per_word)[1], 2))) +
+    annotate('text', 
+             family = 'serif',
+             x = 400, 
+             y = 6, 
+             label = paste0('Kurtosis: ', 
+                            round(
+                              kurtosis(data_final$serp_clean_per_word)[1], 2))) +
+  theme(text = element_text(family = 'serif'))
+
+hist_source_features = data_final %>%
+    ggplot(aes(source_features_per_word)) +
+    geom_histogram() +
+    xlab(str_wrap('Mean total fixation duration on the source features', 
+                  width = 32)) +
+    ylab('Frequency') +
+    annotate('text', 
+             family = 'serif',
+             x = 600, 
+             y = 7, 
+             label = paste0('Skewness: ', 
+                            round(
+                              skewness(
+                                data_final$source_features_per_word
+                                )[1], 2))) +
+    annotate('text',
+             family = 'serif',
+             x = 600, 
+             y = 6, 
+             label = paste0('Kurtosis: ', 
+                            round(
+                              kurtosis(
+                                data_final$source_features_per_word
+                                )[1], 2))) +
+  theme(text = element_text(family = 'serif'))
+
+hist_reliable = data_final %>%
+    ggplot(aes(reliable_per_word)) +
+    geom_histogram() +
+    xlab(str_wrap('Mean total fixation duration on realiable pages',
+                  width = 32)) +
+    ylab('Frequency') +
+    annotate('text', 
+             family = 'serif',
+             x = 350, 
+             y = 8, 
+             label = paste0('Skewness: ', 
+                            round(
+                              skewness(
+                                data_final$reliable_per_word
+                                )[1], 2))) +
+    annotate('text', 
+             family = 'serif',
+             x = 350, 
+             y = 7, 
+             label = paste0('Kurtosis: ', 
+                            round(
+                              kurtosis(
+                                data_final$reliable_per_word
+                                )[1], 2))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        text = element_text(family = 'serif'))
+
+hist_nonreliable = data_final %>%
+    ggplot(aes(nonreliable_per_word)) +
+    geom_histogram() +
+    xlab(str_wrap('Mean total fixation duration on non-reliable pages', 
+                  width = 32)) +
+    ylab('Frequency') +
+    annotate('text', 
+             family = 'serif',
+             x = 400, 
+             y = 6, 
+             label = paste0('Skewness: ', 
+                            round(
+                              skewness(
+                                data_final$nonreliable_per_word
+                                )[1], 2))) +
+    annotate('text', 
+             family = 'serif',
+             x = 400, 
+             y = 5, 
+             label = paste0('Kurtosis: ', 
+                            round(
+                              kurtosis(
+                                data_final$nonreliable_per_word
+                                )[1], 2))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        text = element_text(family = 'serif'))
+  
+
+figure1 = arrangeGrob(hist_serp, 
+                      hist_source_features, 
+                      hist_reliable, 
+                      hist_nonreliable, 
+                      ncol = 2)
+
+ggsave('figures/Figure1.png', 
+       figure1,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+grid.arrange(figure1)
+
+```
+
+*Figure 1*. Histograms of time variables
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data_final = data_final %>%
+  mutate(log_serp = log(serp_clean_per_word),
+         log_source_features = log(source_features_per_word),
+         log_reliable = log(reliable_per_word),
+         log_nonreliable = log(nonreliable_per_word))
+
+hist_log_serp = data_final %>%
+  ggplot(aes(log_serp)) +
+  geom_histogram(aes(y = ..density..)) +
+  stat_function(fun = dnorm, 
+                args = list(mean = mean(data_final$log_serp), 
+                            sd = sd(data_final$log_serp)),
+                colour = 'red') +
+  xlab(str_wrap('Natural logarithm of mean total fixation duration on the web page headers and snippets within the SERP',
+                width = 32)) +
+  ylab('Density') +
+  annotate('text', 
+           family = 'serif',
+           x = 4, 
+           y = 0.85, 
+           label = paste0('Skewness: ', 
+                          round(
+                            skewness(
+                              data_final$log_serp)[1], 2))) +
+  annotate('text', 
+           family = 'serif',
+           x = 4, 
+           y = 0.75, 
+           label = paste0('Kurtosis: ', 
+                          round(
+                            kurtosis(
+                              data_final$log_serp)[1], 2))) +
+  theme(text = element_text(family = 'serif'))
+
+hist_log_source_features = data_final %>%
+  ggplot(aes(log_source_features)) +
+  geom_histogram(aes(y = ..density..)) +
+  stat_function(fun = dnorm, 
+                args = list(
+                  mean = mean(data_final$log_source_features), 
+                  sd = sd(data_final$log_source_features)),
+                colour = 'red') +
+    xlab(str_wrap('Natural logarithm of mean total fixation duration on the source features', 
+                  width = 32)) +
+    ylab('Density') +
+    annotate('text', 
+             family = 'serif',
+             x = 4, 
+             y = 0.7, 
+             label = paste0('Skewness: ', 
+                            round(
+                              skewness(
+                                data_final$log_source_features
+                                )[1], 2))) +
+    annotate('text', 
+             family = 'serif',
+             x = 4, 
+             y = 0.6, 
+             label = paste0('Kurtosis: ', 
+                            round(
+                              kurtosis(
+                                data_final$log_source_features
+                                )[1], 2))) +
+  theme(text = element_text(family = 'serif'))
+
+hist_log_reliable = data_final %>%
+  ggplot(aes(log_reliable)) +
+  geom_histogram(aes(y = ..density..)) +
+  stat_function(fun = dnorm, 
+              args = list(
+                mean = mean(data_final$log_reliable), 
+                sd = sd(data_final$log_reliable)),
+              colour = 'red') +
+  xlab(str_wrap('Natural logarithm of time spent reading realiable pages',
+                width = 32)) +
+  ylab('Density') +
+  annotate('text', 
+           family = 'serif',
+           x = 4.5, 
+           y = 2, 
+           label = paste0('Skewness: ', 
+                          round(
+                            skewness(
+                              data_final$log_reliable
+                              )[1], 2))) +
+  annotate('text', 
+           family = 'serif',
+           x = 4.5, 
+           y = 1.5, 
+           label = paste0('Kurtosis: ', 
+                          round(
+                            kurtosis(
+                              data_final$log_reliable
+                              )[1], 2))) +
+  theme(text = element_text(family = 'serif'))
+
+hist_log_nonreliable = data_final %>%
+  ggplot(aes(log_nonreliable)) +
+  geom_histogram(aes(y = ..density..)) +
+  stat_function(fun = dnorm, 
+                args = list(
+                  mean = mean(data_final$log_nonreliable,
+                              na.rm = T), 
+                  sd = sd(data_final$log_nonreliable,
+                          na.rm = T)),
+                colour = 'red') +  
+  xlab(str_wrap('Natural logarithm of time spent reading non-realiable pages', 
+                width = 32)) +
+  ylab('Density') +
+  annotate('text', 
+           family = 'serif',
+           x = 4, 
+           y = 1.2, 
+           label = paste0('Skewness: ', 
+                          round(
+                            skewness(
+                              data_final$log_nonreliable
+                              )[1], 2))) +
+  annotate('text',
+           family = 'serif',
+           x = 4, 
+           y = 1, 
+           label = paste0('Kurtosis: ', 
+                          round(
+                            kurtosis(
+                              data_final$log_nonreliable
+                              )[1], 2)))
+
+figure2 = arrangeGrob(hist_log_serp, 
+                      hist_log_source_features, 
+                      hist_log_reliable, 
+                      hist_log_nonreliable, 
+                      ncol = 2)
+
+ggsave('figures/Figure2.png', 
+       figure2,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+grid.arrange(figure2)
+```
+
+*Figure 2*. Histograms of transformed time variables with theoretical probability distributions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+data_final = data_final %>%
+  dplyr::select(-c(serp_clean_per_word, log_source_features, log_reliable, log_nonreliable))
+
+write.xlsx(data_final, 'data/data_final_transformed.xlsx')
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+data_final_transformed = read.xlsx(
+  'data/data_final_transformed.xlsx')
+```
+
+# Main Analysis
+
+## Descriptive statistics
+
+```{r}
+# Adicionar tabela com resumo das variáveis:
+# Média, desvio padrão, simetria, kurtose, mínimo, máximo (por grupo)
+```
+
+
+## Research Questions 1a and 1b
+
+### RQ1a
+
+"RQ1a: Do EMMEs affect navigation across the results of a search engine research page (SERP) in English (L2), measured by total fixation duration on the webpage headers and snippets of each result within the SERP? Do L2 level and self-perceived strategic behavior mediate this interaction between EMMEs and navigation in L2?"
+
+To answer these research questions a mediation analysis was conducted. First, a simple linear regression model was fit with total fixation duration on SERP (log transformed) as response and Group (two levels: Control and EMME) as predictor. This model show a statistically significant effect of Group ($\beta=0.68, p=.001, 95\%~CI=[0.30, 1.06], R^2=.19, Adjusted~R^2=.18$). Then, the effects of Group on L2 level and Self-reported behaviour were analyzed to verify possible mediation effects with two linear models, both with Group as predictor and each one with a mediator as response. The models show that there is no effect of Group on L2 level ($\beta=1.20, p=.614, 95\%~CI=[-3.54,5.93], R^2=.005, Adjusted~R^2=-.01$) nor on Self-reported behaviour ($\beta=-0.14,p=.179, 95\%~CI=[-0.34, 0.06], R^2=.03, Adjusted~R^2=0.02]$). Additionally, the effects of L2 level and Self-reported behaviour on SERP were analyzed with two linear models, both with SERP as response and each possible mediator as predictor. The models show no statistically significant effect (L2 level: $\beta = -0.00, p = .946, 95\%~CI=[-0.02, 0.02], R^2=0.00, Adjusted~R^2=-0.018$; Self-reported behaviour: $\beta = -0.25, p = .364, 95\%~CI=[-0.80, 0.30], R^2=0.015, Adjusted~R^2=-0.003$). So, the effect of Group is not mediated by these factors.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Total effect for RQ1a
+rq1a_total = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(log_serp ~ group, data = .)
+
+tab_model(rq1a_total)
+
+# Effect of predictor onto mediator1
+rq1a_mediator1 = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(lextale ~ group, data = .)
+
+tab_model(rq1a_mediator1)
+
+# Effect of predictor onto mediator2
+rq1a_mediator2 = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(survey ~ group, data = .)
+
+tab_model(rq1a_mediator2)
+
+# Effect of mediator1 onto response
+rq1a_mediator1_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(log_serp ~ lextale, data = .)
+
+tab_model(rq1a_mediator1_response)
+
+# Effect of mediator2 onto response
+rq1a_mediator2_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(log_serp ~ survey, data = .)
+
+tab_model(rq1a_mediator2_response)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure3 = get_model_data(rq1a_total, type = 'eff')$group %>%
+  as_tibble() %>%
+  mutate(x = x %>% 
+           as_factor() %>%
+           recode(`1` = 'Control', `2` = 'EMME')) %>%
+  ggplot(aes(x, 
+             predicted, 
+             ymin = conf.low, 
+             ymax = conf.high, 
+             label = round(predicted, 2))) +
+  geom_errorbar(width = .1) +
+  geom_point() +
+  geom_text(nudge_x = .15) +
+  xlab('Group') + 
+  ylab('Total fixation duration on SERP (log(ms))') +
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure3.svg', 
+       figure3,
+       device = 'svg', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+figure3
+```
+
+### RQ1b
+
+"Do EMMEs affect source evaluation of multiple online documents in English (L2) that either endorse or refute the Learning Styles (LS) misconception, to be analyzed by the contrast between total fixation duration on reliable versus non-reliable pages, and on total total fixation duration on the source features (author’s name and occupation)?  Do L2 level and self-perceived strategic behavior mediate this interaction between EMMEs and evaluation of sources in L2?"
+
+To answer these questions a mediation analysis was performed. First, a multiple linear mixed-effects model was fit with total fixation duration on reliable and non-reliable pages as response, reliability (two levels: Reliable and Non-reliable), Group (two levels: Control and EMME) and their interaction as predictors and random intercepts for participants. The model shows a statistically significant effect of Group ($\beta=-43.57, p=.044, 95\%~CI=[-85.99, -1.16], Marginal~R^2=.07, Conditional~R^2=.83$) but not of Reliability ($\beta=6.37, p=.369, 95\%~CI=[-7.63, 20.36]$). It also shows a statistically significant interaction between Group and Reliability ($\beta=29.39, p=.034, 95\%~CI=[2.26, 56.52]$). 
+As already reported, there are no effects of Group on L2 level nor Self-perceived behaviour. Two additional models were fit to test for effects of L2 level and Self-perceived behaviour onto total fixation duration on reliable and non-reliable pages, both with random intercepts for participants. The first model show a statistically significant effect of L2 level ($\beta=-2.58, p=.036, 95\%~CI=[-4.98, -0.17], Marginal R^2=.07, Conditional R^2=.82$), but the second model show no statistically significant effect of Self-perceived behaviour ($\beta=9.22, p=.752, 95\%~CI=[-48.40, 66.85], Marginal R^2=.002, Conditional R^2=,82$). Because of the significant effect of L2 level, two additional models were fit with the addition of the interaction with this variable with Reliability and Self-perceived behaviour as predictors, but the models show no statistically significant interaction (Reliability: $\beta=0.11, p=.262, 95\%~CI=[-0.09, 0.31], Marginal R^2=.07, Conditional R^2=.82$; Self-perceived behaviour: $\beta=0.02, p=.954, 95\%~CI=[-0.77, 0.82], Marginal R^2=.07, Conditional R^2=.82$)
+
+Then, a linear model was fit with total fixation duration on source features as response and Group as predictor. The model shows no statistically significant effects of Group ($\beta=-60.29, p=.174, 95\%~CI=[-148.07, 27.49], R^2=0.03, Adjusted~R^2=0.02$). Two additional models were fit to test for effects of L2 level and Self-perceived behaviour onto total fixation duration on source features and they show no statistically significant effects (L2 level: $\beta=-0.06, p=.980, 95\%~CI=[-5.15, 5.02], R^2<.001, Adjusted~R^2=-0.02$; Self-reported behavior: $\beta=15.95, p=.785, 95\%~CI=[-101.02, 132.99], R^2=0.001, Adjusted~R^2=-0.017$)
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Total effect for RQ1b, Model 1
+rq1b_model1_total = data_final_transformed %>%
+  pivot_longer(c(reliable_per_word, nonreliable_per_word), 
+               names_to = 'reliability', 
+               values_to = 'fixation') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(fixation ~ reliability * group + (1|Participant), data = .)
+
+tab_model(rq1b_model1_total)
+
+# Effect of mediator1 onto response
+rq1b_mediator1_response = data_final_transformed %>%
+  pivot_longer(c(reliable_per_word, nonreliable_per_word), 
+               names_to = 'reliability', 
+               values_to = 'fixation') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(fixation ~ lextale + (1|Participant), data = .)
+
+tab_model(rq1b_mediator1_response)
+
+# Figure 5
+figure5 = data_final_transformed %>%
+  pivot_longer(c(reliable_per_word, nonreliable_per_word), 
+               names_to = 'reliability', 
+               values_to = 'fixation') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO'),
+         reliability = reliability %>%
+           as_factor() %>%
+           recode(`reliable_per_word` = 'Reliable',
+                  `nonreliable_per_word` = 'Non-reliable')) %>%
+  ggplot(aes(lextale, fixation)) +
+  geom_point(aes(color = reliability)) +
+  geom_smooth(method = 'lm', color = 'black') +
+  xlab('L2 level') +
+  ylab(str_wrap(
+    'Total fixation duration on reliable and non-reliable pages',
+    45)) + 
+  theme(text = element_text(family = 'serif')) +
+  scale_color_brewer(palette = 'Dark2')
+
+ggsave('figures/Figure5.png', 
+       figure5,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+# Effect of mediator2 onto response
+rq1b_mediator2_response = data_final_transformed %>%
+  pivot_longer(c(reliable_per_word, nonreliable_per_word), 
+               names_to = 'reliability', 
+               values_to = 'fixation') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(fixation ~ survey + (1|Participant), data = .)
+
+tab_model(rq1b_mediator2_response)
+
+# Interaction of mediator1 and reliability
+rq1b_mediator1_reliability = data_final_transformed %>%
+  pivot_longer(c(reliable_per_word, nonreliable_per_word), 
+               names_to = 'reliability', 
+               values_to = 'fixation') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(fixation ~ lextale + lextale:reliability + (1|Participant), data = .)
+
+tab_model(rq1b_mediator1_reliability)
+
+# Interaction of mediator1 and survey
+rq1b_mediator1_survey = data_final_transformed %>%
+  pivot_longer(c(reliable_per_word, nonreliable_per_word), 
+               names_to = 'reliability', 
+               values_to = 'fixation') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(fixation ~ lextale + lextale:survey + (1|Participant), data = .)
+
+tab_model(rq1b_mediator1_survey)
+
+# Total effect for RQ1b, Model 2
+rq1b_model2_total = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(source_features_per_word ~ group, data = .)
+
+tab_model(rq1b_model2_total)
+
+# Effect of mediator1 onto response
+rq1b_model2_mediator1_response = data_final_transformed %>%
+  lm(source_features_per_word ~ lextale, data = .)
+
+tab_model(rq1b_model2_mediator1_response)
+
+# Effect of mediator1 onto response
+rq1b_model2_mediator2_response = data_final_transformed %>%
+  lm(source_features_per_word ~ survey, data = .)
+
+tab_model(rq1b_model2_mediator2_response)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure4 = get_model_data(rq1b_model1_total, type = 'int') %>%
+  as_tibble() %>%
+  mutate(x = x %>% 
+           as_factor() %>%
+           recode(`1` = 'Non-reliable', `2` = 'Reliable'),
+         group = group %>%
+           as_factor() %>%
+           recode('VIDEO' = 'Control')) %>%
+  ggplot(aes(x, 
+             predicted, 
+             ymin = conf.low, 
+             ymax = conf.high, 
+             label = round(predicted, 2),
+             color = group)) +
+  geom_errorbar(width = .1, position = position_dodge(width = .2)) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_text(position = position_dodge(width = 1), family = 'serif') +
+  xlab('Webpage reliability') + 
+  ylab(str_wrap(
+    'Total fixation duration on reliable and non-reliable pages',
+    45)) +
+  scale_color_brewer(palette = 'Dark2') +
+  theme(legend.title = element_text()) +
+  labs(color = 
+         str_wrap('Group',
+                  18)) +
+  theme(text = element_text(family = 'serif')) + 
+  ylim(c(0, 250))
+  
+
+ggsave('figures/Figure4.png', 
+       figure4,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+figure4
+```
+
+## Research Questions 2a, 2b and 2c
+
+### RQ2a
+
+"RQ2a Do EMMEs enhance argumentative reasoning, i.e., identification of opposing perspectives about the Learning styles theory, as measured by an essay writing task? Do English level, navigation and evaluation behavior mediate the effect of EMMEs on argumentation score?"
+
+To answer these questions a mediation analysis was performed. A linear model with Argumentation scores on an essay writing task as response and Group as predictor. No effect of Group was observed ($\beta=0.19, p=.683, 95\%~CI=[-0.75, 1.14], R^2=.003, Adjusted R^2=-.02$). Three additional models were fit to test for possible effects of L2 level, Navigation (Total fixation duration on SERP) and Evaluation (Total fixation duration on source features) on Argumentation scores. Only L2 level had a statistically significant effect (L2 level: $\beta=0.07, p=.004, 95\%~CI=[0.02, 0.12], R^2=.14, Adjusted R^2=.12$; Navigation: $\beta=-0.18, p=.553, 95\%~CI=[-0.79, 0.43], R^2=.006, Adjusted R^2=-.01$; Evaluation: $\beta=0.00, p=.449, 95\%~CI=[-0, 0], R^2=.01, Adjusted R^2=-.008$).
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Total effect for RQ2a
+rq2a_model_total = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(argumentationNew ~ group, data = .)
+
+tab_model(rq2a_model_total)
+
+# Interaction between group and L2 level
+rq2a_interaction = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(argumentationNew ~ group * lextale, data = .)
+
+tab_model(rq2a_interaction)
+
+# Effect of mediator1 onto response
+rq2a_mediator1_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(argumentationNew ~ lextale, data = .)
+
+tab_model(rq2a_mediator1_response)
+
+# Effect of mediator2 onto response
+rq2a_mediator2_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(argumentationNew ~ log_serp, data = .)
+
+tab_model(rq2a_mediator2_response)
+
+# Effect of mediator3 onto response
+rq2a_mediator3_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(argumentationNew ~ source_features_per_word, data = .)
+
+tab_model(rq2a_mediator3_response)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure9 = get_model_data(rq2a_mediator1_response, type = 'eff')$lextale %>%
+  ggplot(aes(x, predicted)) +
+    geom_line() +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2) +
+  xlab('L2 level') +
+  ylab('Argumentation Scores (Predicted)') + 
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure9.png', 
+       figure9,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+```
+
+### RQ2b
+
+"RQ2b Do EMMEs increase memory for the sources when reading multiple documents? Do L2 level, navigation and evaluation behavior mediate the effect of EMMEs on source memory?"
+
+To answer these questions a mediation analysis was performed. A linear model with Source memory task scores as response and Group as predictor. No effect of Group was observed $\beta=-1.39, p=.187, 95\%~CI=[-3.48, 0.70], R^2=.031, Adjusted R^2=-.014$. Three additional models were fit to test for possible effects of L2 level, Navigation (Total fixation duration on SERP) and Evaluation (Total fixation duration on source features) on Source memory task scores. Only L2 level had a statistically significant effect (L2 level: $\beta=0.20, p=<.001, 95\%~CI=[0.09, 0.31], R^2=.20, Adjusted R^2=.19$; Navigation: $\beta=-0.23, p=.740, 95\%~CI=[-1.58, 1.13], R^2=.002, Adjusted R^2=-.02$; Evaluation: $\beta=0.00, p=.189, 95\%~CI=[-0, 0.01], R^2=.03, Adjusted R^2=.01$).
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Total effect for RQ2b
+rq2b_model_total = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(smt ~ group, data = .)
+
+tab_model(rq2b_model_total)
+
+# Interaction between group and L2 level
+rq2b_interaction = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(smt ~ group * lextale, data = .)
+
+tab_model(rq2b_interaction)
+
+figure6 = get_model_data(rq2b_interaction, type = 'int') %>%
+  as_tibble() %>%
+  mutate(x = x %>% 
+           as_factor() %>%
+           recode(`1` = 'Control', `2` = 'EMME')) %>%
+  ggplot(aes(x, 
+             predicted, 
+             ymin = conf.low, 
+             ymax = conf.high, 
+             label = round(predicted, 2),
+             color = group)) +
+  geom_errorbar(width = .1, position = position_dodge(width = .2)) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_text(position = position_dodge(width = 1), family = 'serif') +
+  xlab('Group') + 
+  ylab(str_wrap(
+    'Source Memory Scores',
+    45)) +
+  scale_color_brewer(palette = 'Dark2') +
+  theme(legend.title = element_text()) +
+  labs(color = 
+         str_wrap('L2 Level',
+                  18)) +
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure6.png', 
+       figure6,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+# Effect of mediator1 onto response
+rq2b_mediator1_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(smt ~ lextale, data = .)
+
+tab_model(rq2b_mediator1_response)
+
+# Effect of mediator2 onto response
+rq2b_mediator2_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(smt ~ log_serp, data = .)
+
+tab_model(rq2b_mediator2_response)
+
+# Effect of mediator3 onto response
+rq2b_mediator3_response = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(smt ~ source_features_per_word, data = .)
+
+tab_model(rq2b_mediator3_response)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure10 = get_model_data(rq2b_mediator1_response, type = 'eff')$lextale %>%
+  ggplot(aes(x, predicted)) +
+    geom_line() +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2) +
+  xlab('L2 level') +
+  ylab('Source memory task scores (Predicted)') +
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure10.png', 
+       figure10,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+```
+
+### RQ2c
+
+"RQ 2c Are EMMEs linked with updating of misconceptions about Learning Styles, to be measured in a pre/posttest? Do English level, navigation, and evaluation behavior (including memory for the sources) mediate the effect of EMMEs on misconception change?"
+
+To answer these questions a mediation analysis was performed. A linear mixed-effects model with Scores on a pre and post-test of misconceptions about learning styles as response and Group, Moment (pre and post) and their interaction as predictor and random intercepts for participants. No effects of Group ($\beta=0.66, p=.207, 95\%~CI=[-0.37, 1.68], Marginal R^2=.07, Conditional R^2=.42$), Moment ($\beta=-0.71, p=.09, 95\%~CI=[-1.52, 0.11]$), nor statistically significant interactions were observed ($\beta=-0.39, p=.502, 95\%~CI=[-1.53, 0.76]$). Three additional models were fit to test for possible effects of L2 level, Navigation (Total fixation duration on SERP) and Evaluation (Total fixation duration on source features) on Scores on the pre and post-test, all three models with the interaction with Moment as predictor. The first model showed a statistically significant effect of L2 level ($\beta=0.11, p<.001, 95\%~CI=[0.06, 0.17], Marginal R^2=.18, Conditional R^2=.56$), Moment ($\beta=7.71, p<.001, 95\%~CI=[3.76, 11.66]$), and a statistically significant interaction between the two ($\beta=-0.12, p<.001, 95\%~CI=[-0.18, -0.07]$). The second model showed no statistically significant effect of Navigation (Navigation: $\beta=0.22, p=.502, 95\%~CI=[-0.43, 0.88], Marginal R^2=.06, Conditional R^2=.41$; Moment: $\beta=-0.79, p=.667, 95\%~CI=[-4.39, 2.82]$; Interaction: $\beta=-0.02, p=.948, 95\%~CI=[-0.76, 0.71]$). The third model showed a statistically significant effect of Evaluation ($\beta=-0.00, p=.017, 95\%~CI=[-0.01, -0.00], Marginal R^2=.10, Conditional R^2=.49$), Moment ($\beta=-1.82, p<.001, 95\%~CI=[-2.82, -0.82]$) and a statistically significant interaction between the two ($\beta=0.00, p=.032, 95\%~CI=[0.00, 0.01]$).
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Total effect for RQ2c
+rq2c_model_total = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ group * moment + (1|Participant), data = .)
+
+tab_model(rq2c_model_total)
+
+# Interaction 1
+rq2c_interaction1 = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ group * moment * lextale + (1|Participant), data = .)
+
+tab_model(rq2c_interaction1)
+
+# Effect of mediator1 onto response
+rq2c_mediator1_response = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ lextale * moment + (1|Participant), data = .)
+
+tab_model(rq2c_mediator1_response)
+
+# Effect of mediator2 onto response
+rq2c_mediator2_response = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ log_serp * moment + (1|Participant), data = .)
+
+model_new = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor() %>% 
+           relevel('VIDEO')) %>%
+  lm(post ~ group * pre, data = .)
+
+plot_model(model_new, type = 'eff', terms = c('pre', 'group'))
+
+figure_new = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           recode(VIDEO = 'Control') %>%
+           relevel('Control')) %>%
+  ggplot(aes(pre, post, group = group, color = group)) +
+  geom_point() +
+  geom_smooth(method = 'lm', fullrange = T) +
+  scale_color_brewer(palette = 'Dark2') +
+  xlab('Learning styles misconception (Pretest)') +
+  ylab('Learning styles misconception (Posttest)') +
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure_new.png', 
+       figure_new,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+tab_model(rq2c_mediator2_response)
+
+# Interaction 2
+rq2c_interaction2 = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ log_serp * moment * group + (1|Participant), data = .)
+
+# Without group
+data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ log_serp * moment + (1|Participant), data = .) %>%
+  tab_model()
+
+tab_model(rq2c_interaction2)
+plot_model(rq2c_interaction2, type = 'int')
+
+figure8 = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           recode(VIDEO = 'Control') %>%
+           relevel('Control')) %>%
+  ggplot(aes(log_serp, score, group = group, color = group)) +
+  geom_point() +
+  geom_smooth(method = 'lm', fullrange = T) +
+  scale_color_brewer(palette = 'Dark2') +
+  xlab('Total fixation duration on SERP (ms)') +
+  ylab('Learning styles misconception (Pre and Post Tests)') +
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure8.png', 
+       figure8,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+# Effect of mediator3 onto response
+rq2c_mediator3_response = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ source_features_per_word * moment + (1|Participant), data = .)
+
+tab_model(rq2c_mediator3_response)
+
+# With group
+data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lmer(score ~ source_features_per_word * moment * group + (1|Participant), data = .) %>%
+  tab_model()
+
+
+# New analysis with serp
+rq2c_interaction2_new = data_final_transformed %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  lm(post ~ log_serp * pre * group, data = .)
+
+tab_model(rq2c_interaction2_new)
+plot_model(rq2c_interaction2, type = 'int')
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure11 = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  ggplot(aes(lextale, score, group = moment, color = moment)) +
+  geom_point() +
+  geom_smooth(method = 'lm') +
+  scale_color_brewer(palette = 'Dark2') +
+  xlab('L2 level') +
+  ylab('Learning styles misconception scores (Pre and Post Tests)') + 
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure11.png', 
+       figure11,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure7 = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO'),
+         moment = moment %>% 
+           case_match(
+             'pre' ~ 'Pretest',
+             'post' ~ 'Posttest')) %>%
+  ggplot(aes(source_features_per_word, score, group = moment, color = moment)) +
+  geom_point() +
+  geom_smooth(method = 'lm') +
+  scale_color_brewer(palette = 'Dark2') +
+  xlab('Fixation duration on Source Features') +
+  ylab('Learning styles misconception test') + 
+  theme(text = element_text(family = 'serif'),
+        legend.title = element_text()) +
+  guides(color = guide_legend(title = 'Moment'))
+
+ggsave('figures/Figure7.png', 
+       figure7,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+
+figure12 = data_final_transformed %>%
+  pivot_longer(c(pre, post),
+               names_to = 'moment',
+               values_to = 'score') %>%
+  mutate(group = group %>% 
+           as_factor()  %>%
+           relevel('VIDEO')) %>%
+  ggplot(aes(source_features_per_word, score, group = moment, color = moment)) +
+  geom_point() +
+  geom_smooth(method = 'lm') +
+  scale_color_brewer(palette = 'Dark2') +
+  xlab('Total fixation duration on Source Features') +
+  ylab('Scores on Pre and Post Tests') + 
+  theme(text = element_text(family = 'serif'))
+
+ggsave('figures/Figure7.png', 
+       figure7,
+       device = 'png', 
+       width = 16, 
+       height = 16, 
+       units = 'cm', 
+       dpi = 300)
+```
+
