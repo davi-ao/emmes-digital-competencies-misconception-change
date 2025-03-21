@@ -12,7 +12,7 @@ __Results and Conclusions__. EMMEs had a positive effect on increased time inspe
 
 _Keywords_: educational misconceptions, multiple documents, EMMEs, eye-tracking, L2 reading.
 
-## Notice
+## Instructions for the Argumentative Essay Task
 
 Instructions and procedures for the Argumentative essay task were adapted from Andresen and colleagues (2019): "“The texts you have just read presented different perspectives about learning styles. Now, please write a short essay stating your informed opinion on the topic you just read about by describing and evaluating these different perspectives, supporting your arguments based on the webpages you have just visited. Write your answer in a concise and elaborate manner, using approximately half a page. Give your text a title.”
 
